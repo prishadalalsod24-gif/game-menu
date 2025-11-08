@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale-1.0">
+    <title>Geometric Chase - Safe Zone</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0d1117; /* Dark background */
+            color: #c9d1d9;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        #p5-canvas-container {
+            border: 4px solid #30363d;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+            background-color: #161b22;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container" class="p-6 md:p-10 w-full max-w-4xl">
+    <header class="text-center mb-6">
+        <h1 class="text-4xl font-bold text-white mb-2">Geometric Chase - Safe Zone Mode</h1>
+        <p id="role-display" class="text-lg text-yellow-400 font-semibold">Triangle (WASD) chases Square (Arrows)</p>
+    </header>
+
+    <div id="p5-canvas-container" class="relative">
+        <!-- P5.js canvas will be placed here -->
+    </div>
+
+    <div class="mt-6 p-4 bg-gray-800 rounded-lg shadow-inner flex flex-wrap justify-around items-center gap-4">
+        <!-- Timer starts immediately -->
+        <div id="timer-display" class="text-2xl font-mono text-center text-green-400 p-2 bg-gray-700 rounded-lg min-w-[150px]">Time: 300.0s</div>
+        
+        <!-- NEW: Zone Timer -->
+        <div id="zone-timer-display" class="text-2xl font-mono text-center text-blue-400 p-2 bg-gray-700 rounded-lg min-w-[200px]">Zone: 0.0s / 30.0s</div>
+    </div>
+</div>
+
+<script>
+    // --- GLOBAL VARIABLES & CONSTANTS ---
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 600;
+    const MOVEMENT_SPEED = 4; // Slightly slower for more controlled chasing
+    const SQUARE_SIZE = 40;
+    const GAME_DURATION = 300; // 5 minutes in seconds
+    const SQUARE_ROTATION_SPEED = 0.005;
+    const SQUARE_SPEED_MULTIPLIER = 1.2; // Increased from 1.0
+    const ZONE_WIN_AMOUNT = 10; // 10 seconds in zone to win (was 30)
+    // const ZONE_SHIFT_INTERVAL = 7000; // DEPRECATED: Zone moves every 7 seconds (was 10000)
+    const MIN_ZONE_SHIFT_INTERVAL = 5000; // Minimum time before zone moves (5 seconds)
+    const MAX_ZONE_SHIFT_INTERVAL = 10000; // Maximum time before zone moves (10 seconds)
+
+    let gameData = {
+        status: 'waiting',
+        startTime: 0,
+        gameDuration: GAME_DURATION,
+        // Triangle is now a free-moving player
+        triangle: { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT / 4, rotation: Math.PI / 2, size: 20 }, 
+        square: {
+            x: CANVAS_WIDTH / 2,
+            y: (CANVAS_HEIGHT / 4) * 3,
+            rotation: 0,
+            size: SQUARE_SIZE,
+            rotationSpeed: SQUARE_ROTATION_SPEED,
+            moveSpeedMultiplier: SQUARE_SPEED_MULTIPLIER
+        },
+        // Safe Zone is a circle again
+        safeZone: { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT / 2, r: 100 }, 
+        squareZoneTime: 0,
+        totalTimeInZone: 0,
+        lastZoneCheckTime: 0,
+        // lastZoneShiftTime: 0, // Replaced by nextZoneShiftTime
+        nextZoneShiftTime: 0, // Stores the exact time for the next shift
+    };
+
+    // --- P5.JS SKETCH ---
+    let sketch = function(p) {
+
+        let triangleColor = p.color(255, 60, 60); // Red
+        let squareColor = p.color(60, 255, 60);   // Green
+
+        p.setup = function() {
+            let canvas = p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+            canvas.parent('p5-canvas-container');
+            p.rectMode(p.CENTER);
+            p.angleMode(p.RADIANS);
+        }
+
+        p.draw = function() {
+            p.background(30); // Dark canvas background
+            
+            drawSafeZone(); // Draw the circular safe zone
+
+            if (gameData.status === 'waiting') {
+                p.fill(200);
+                p.textAlign(p.CENTER, p.CENTER);
+                p.textSize(32);
+                p.text("Geometric Chase", p.width / 2, p.height / 2 - 30);
+                p.textSize(18);
+                p.text("Triangle (WASD): Catch the Square!", p.width / 2, p.height / 2 + 20);
+                p.text("Square (Arrows): Hold the Zone for 30s!", p.width / 2, p.height / 2 + 50);
+                p.textSize(20);
+                p.text("Press SPACE to Start", p.width / 2, p.height / 2 + 90);
+            }
+
+            // --- Game Logic Updates ---
+            if (gameData.status === 'playing') {
+                handleInput();
+                updateZone(); // Check if the zone needs to move
+                checkPlayerCollision(); // Check if Triangle tagged the Square
+
+                // Zone Time Logic
+                const now = p.millis();
+                const sq = gameData.square;
+                const zone = gameData.safeZone;
+                // Check if square is in the circular zone
+                const inZone = p.dist(sq.x, sq.y, zone.x, zone.y) < zone.r;
+                
+                let timeDelta = (now - gameData.lastZoneCheckTime) / 1000;
+
+                if (inZone) {
+                    gameData.squareZoneTime += timeDelta; // Add to Square's win condition
+                    gameData.totalTimeInZone += timeDelta; // Add to time-pausing logic
+                }
+                gameData.lastZoneCheckTime = now;
+
+                checkWinConditions(); // Check after updating time
+            }
+
+            // --- Drawing ---
+            drawTriangle();
+            drawSquare();
+
+            // --- UI Overlay ---
+            drawGameStatusOverlay();
+        }
+
+        // Draws the circular safe zone
+        function drawSafeZone() {
+            const { x, y, r } = gameData.safeZone;
+            p.push();
+            p.fill(60, 100, 255, 30); // Faint blue
+            p.stroke(60, 100, 255, 100); // Light blue outline
+            p.strokeWeight(3);
+            p.ellipseMode(p.CENTER);
+            p.ellipse(x, y, r * 2, r * 2);
+            p.pop();
+        }
+
+        // New function to move the zone periodically
+        function updateZone() {
+            // if (p.millis() - gameData.lastZoneShiftTime > ZONE_SHIFT_INTERVAL) { // Old logic
+            if (p.millis() > gameData.nextZoneShiftTime) { // New logic: Check if current time has passed the scheduled shift time
+                const r = gameData.safeZone.r;
+                gameData.safeZone.x = p.random(r, CANVAS_WIDTH - r);
+                gameData.safeZone.y = p.random(r, CANVAS_HEIGHT - r);
+                
+                // Calculate and set the *next* random time to shift
+                let nextInterval = p.random(MIN_ZONE_SHIFT_INTERVAL, MAX_ZONE_SHIFT_INTERVAL);
+                gameData.nextZoneShiftTime = p.millis() + nextInterval;
+            }
+        }
+
+        function startGame() {
+            gameData.status = 'playing';
+            gameData.startTime = p.millis();
+
+            // Reset player positions
+            gameData.triangle = { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT / 4, rotation: Math.PI / 2, size: 20 };
+            gameData.square.x = CANVAS_WIDTH / 2;
+            gameData.square.y = (CANVAS_HEIGHT / 4) * 3;
+            
+            gameData.gameDuration = GAME_DURATION;
+            
+            // Reset timers and zone
+            gameData.squareZoneTime = 0;
+            gameData.totalTimeInZone = 0;
+            gameData.lastZoneCheckTime = p.millis();
+            
+            // Move zone to its first random location immediately
+            const r = gameData.safeZone.r;
+            gameData.safeZone.x = p.random(r, CANVAS_WIDTH - r);
+            gameData.safeZone.y = p.random(r, CANVAS_HEIGHT - r);
+
+            // Set the first random shift time
+            let firstInterval = p.random(MIN_ZONE_SHIFT_INTERVAL, MAX_ZONE_SHIFT_INTERVAL);
+            gameData.nextZoneShiftTime = p.millis() + firstInterval;
+        }
+
+        // Function to end the game
+        function endGame(winner) {
+            if (gameData.status === 'playing') {
+                if (winner === 'triangle') {
+                    gameData.status = 'triangle_wins';
+                } else { // 'square' or 'time_up'
+                    gameData.status = 'square_wins';
+                }
+            }
+        }
+
+        function drawGameStatusOverlay() {
+            if (gameData.status === 'waiting') {
+                document.getElementById('timer-display').innerText = `Time: ${GAME_DURATION.toFixed(1)}s`;
+                document.getElementById('zone-timer-display').innerText = `Zone: 0.0s / ${ZONE_WIN_AMOUNT.toFixed(1)}s`;
+                return;
+            }
+            
+            // Timer logic (pauses when square is in zone)
+            let elapsed = ((p.millis() - gameData.startTime) / 1000) - gameData.totalTimeInZone;
+            let remaining = p.max(0, gameData.gameDuration - elapsed);
+            
+            document.getElementById('timer-display').innerText = `Time: ${remaining.toFixed(1)}s`;
+            document.getElementById('zone-timer-display').innerText = `Zone: ${gameData.squareZoneTime.toFixed(1)}s / ${ZONE_WIN_AMOUNT.toFixed(1)}s`;
+
+
+            if (gameData.status === 'triangle_wins') {
+                p.fill(triangleColor, 200);
+                p.textAlign(p.CENTER, p.CENTER);
+                p.textSize(64);
+                p.text("TRIANGLE WINS!", p.width / 2, p.height / 2 - 20);
+                p.textSize(24);
+                p.text("Press SPACE to Restart", p.width / 2, p.height / 2 + 40);
+
+            } else if (gameData.status === 'square_wins') {
+                p.fill(squareColor, 200);
+                p.textAlign(p.CENTER, p.CENTER);
+                p.textSize(64);
+                p.text("SQUARE WINS!", p.width / 2, p.height / 2 - 20);
+                p.textSize(24);
+                p.text("Press SPACE to Restart", p.width / 2, p.height / 2 + 40);
+
+            } else if (gameData.status === 'playing' && remaining <= 0) {
+                // Time's up, Square wins
+                 endGame('square');
+            }
+        }
+
+        // Draw the free-moving triangle
+        function drawTriangle() {
+            const { x, y, rotation, size } = gameData.triangle;
+            p.push();
+            p.translate(x, y);
+            p.rotate(rotation);
+            p.fill(triangleColor);
+            p.noStroke();
+            let s = size; // Use the size property
+            p.triangle(
+                -s / 1.5, s / 1.5,    // Bottom-rear point
+                -s / 1.5, -s / 1.5,   // Top-rear point
+                 s, 0                 // Tip point
+            );
+            p.pop();
+        }
+
+        // Draw the square (no corner logic)
+        function drawSquare() {
+            const { x, y, rotation, size } = gameData.square;
+            p.push();
+            p.translate(x, y);
+            p.rotate(rotation);
+
+            // Main square body
+            p.fill(squareColor);
+            p.stroke(255);
+            p.strokeWeight(2);
+            p.rect(0, 0, size, size);
+            p.pop();
+        }
+
+        // NEW collision check between players
+        function checkPlayerCollision() {
+            if (gameData.status !== 'playing') return;
+            
+            const tri = gameData.triangle;
+            const sq = gameData.square;
+            
+            // Simple distance check (approximating shapes as circles)
+            const dist = p.dist(tri.x, tri.y, sq.x, sq.y);
+            const collisionThreshold = (sq.size / 2) + tri.size; // Sum of their approximate radii
+            
+            if (dist < collisionThreshold) {
+                endGame('triangle'); // Triangle wins by tagging
+            }
+        }
+
+        // Updated win conditions
+        function checkWinConditions() {
+            if (gameData.status !== 'playing') return;
+
+            // Square win condition
+            if (gameData.squareZoneTime >= ZONE_WIN_AMOUNT) {
+                endGame('square');
+                return;
+            }
+            // Triangle win condition is handled by checkPlayerCollision()
+        }
+
+        function handleInput() {
+            if (gameData.status !== 'playing') return;
+            handleTriangleInput();
+            handleSquareInput();
+        }
+
+        // Triangle now moves with WASD
+        function handleTriangleInput() {
+            let { x, y, rotation, size } = gameData.triangle;
+            const speed = MOVEMENT_SPEED - 2; // Triangle is now even slower (was MOVEMENT_SPEED - 1)
+            let moveX = 0;
+            let moveY = 0;
+
+            if (p.keyIsDown(87)) { moveY = -1; } // W
+            if (p.keyIsDown(83)) { moveY = 1; } // S
+            if (p.keyIsDown(65)) { moveX = -1; } // A
+            if (p.keyIsDown(68)) { moveX = 1; } // D
+
+            if (moveX !== 0 || moveY !== 0) {
+                let newX = x + moveX * speed;
+                let newY = y + moveY * speed;
+                
+                // Update rotation to point in direction of movement
+                gameData.triangle.rotation = p.atan2(moveY, moveX);
+                
+                // Constrain to canvas
+                const halfSize = size; // Use size for constraint
+                gameData.triangle.x = p.constrain(newX, halfSize, CANVAS_WIDTH - halfSize);
+                gameData.triangle.y = p.constrain(newY, halfSize, CANVAS_HEIGHT - halfSize);
+            }
+        }
+
+        // Square now moves with Arrow Keys
+        function handleSquareInput() {
+            let { x, y, rotation, size } = gameData.square;
+            const speed = MOVEMENT_SPEED * SQUARE_SPEED_MULTIPLIER;
+            let newX = x;
+            let newY = y;
+            
+            if (p.keyIsDown(p.UP_ARROW)) { newY -= speed; }
+            if (p.keyIsDown(p.DOWN_ARROW)) { newY += speed; }
+            if (p.keyIsDown(p.LEFT_ARROW)) { newX -= speed; }
+            if (p.keyIsDown(p.RIGHT_ARROW)) { newX += speed; }
+
+            const halfSize = size / 2;
+            gameData.square.x = p.constrain(newX, halfSize, CANVAS_WIDTH - halfSize);
+            gameData.square.y = p.constrain(newY, halfSize, CANVAS_HEIGHT - halfSize);
+            
+            // Keep the auto-rotation
+            gameData.square.rotation += SQUARE_ROTATION_SPEED; 
+        }
+
+        p.keyPressed = function() {
+            if (p.key === ' ') { // Spacebar
+                if (gameData.status === 'waiting') {
+                    startGame(); // Start game
+                } else if (gameData.status === 'triangle_wins' || gameData.status === 'square_wins') {
+                    startGame(); // Restart game
+                }
+            }
+        }
+    }
+
+    // Initialize P5.js sketch globally
+    let myp5 = new p5(sketch);
+
+</script>
+
+</body>
+</html>

@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>p5.js Game: Triangle vs. Square</title>
+    <style>
+      /* Basic reset and page styling */
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+          "Segoe UI Symbol";
+        background-color: #111;
+        color: #eee;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        margin: 0;
+        padding: 1rem;
+        box-sizing: border-box;
+      }
+      h1 {
+        color: #fff;
+      }
+      /* This is the <main> element the p5.js script looks for */
+      main {
+        display: grid;
+        place-items: center;
+        border: 2px solid #555;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.4);
+        max-width: 100%;
+        /* The canvas will be 800x600, this just holds it */
+      }
+      canvas {
+        display: block; /* Removes any default bottom margin */
+        max-width: 100%;
+        height: auto; /* Maintains aspect ratio if main is shrunk */
+      }
+      /* Controls section styling */
+      .controls {
+        margin-top: 1.5rem;
+        background-color: #222;
+        padding: 1rem 1.5rem;
+        border-radius: 8px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem 2rem;
+        max-width: 800px;
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .controls h2 {
+        grid-column: 1 / -1; /* Span both columns */
+        text-align: center;
+        margin: 0 0 0.5rem 0;
+        color: #fff;
+        border-bottom: 1px solid #444;
+        padding-bottom: 0.5rem;
+      }
+      .player {
+        padding: 0;
+        margin: 0;
+      }
+      .player h3 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.1rem;
+      }
+      .player-1 h3 {
+        color: #0096ff; /* Player 1 Blue */
+      }
+      .player-2 h3 {
+        color: #ff6400; /* Player 2 Orange */
+      }
+      .player p {
+        margin: 0.25rem 0;
+        font-size: 0.9rem;
+        color: #ccc;
+      }
+      /* Style for key indicators */
+      .player code {
+        background-color: #333;
+        color: #eee;
+        padding: 0.1em 0.4em;
+        border-radius: 4px;
+        font-family: "Courier New", Courier, monospace;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- This is the <main> element where the canvas will be placed -->
+    <main>
+    </main>
+
+    <!-- Load p5.js libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/addons/p5.sound.min.js"></script>
+
+    <!-- All p5.js game logic is now inside this script tag -->
+    <script>
+      // --- Global Game Variables ---
+      let player1; // The triangle
+      let player2; // The square
+      let bullet = null; // Can only be one bullet at a time
+      let particles = []; // For explosion effects
+
+      // --- Sound Variable ---
+      // We will generate the sound, so no global variable is needed.
+
+      // --- Game State Variables ---
+      let gameEnding = false; // True when hit occurs, before game over screen
+      let gameOver = false; // True when game over screen is shown
+      let gameEndTime = 0; // Timestamp for when the hit occurred
+      let gameStartTime = 0; // Timestamp for when the game started
+      let winner = null; // 'player1' or 'player2'
+
+      // --- Tuned Game Constants ---
+      const PLAYER_1_SIZE = 37.5; // Was 25
+      const PLAYER_2_SIZE = 41.25; // Was 27.5
+      const BULLET_SIZE = 11.25; // Was 7.5
+      const PLAYER_1_SPEED = 1;
+      const PLAYER_2_SPEED = 4; // Was 3
+      const BULLET_SPEED = 10;
+      const GAME_END_DELAY = 1000; // 1 second delay after hit
+      const CHARGE_TIME = 1500; // 1.5 seconds to fully charge
+      const GAME_DURATION = 180 * 1000; // 3 minutes in milliseconds
+
+      // --- Player 2 Leap Variables ---
+      let isLeapReady = true;
+      let lastLeapTime = 0;
+      const LEAP_COOLDOWN = 3000; // 3 seconds (was 5000)
+      const LEAP_SPEED_MULTIPLIER = 10; // 10x speed
+      const LEAP_DURATION = 100; // 0.1 seconds (was 50)
+
+      // --- Player 2 Leap State ---
+      let isLeaping = false;
+      let leapStartTime = 0;
+      let leapDirX = 0;
+      let leapDirY = 0;
+
+      // --- Player 1 Charge Shot Variables ---
+      let isCharging = false;
+      let chargeStartTime = 0;
+      let chargeLevel = 0; // 0.0 to 1.0
+
+      // --- p5.js preload() function ---
+      // Removing this empty function as it might be causing the loading issue
+      // function preload() {
+      //   // We are generating sounds, so no preloading needed.
+      // }
+
+      // --- p5.js setup() function ---
+      function setup() {
+        let canvas = createCanvas(800, 600);
+        // Parent the canvas to the <main> element in index.html
+        canvas.parent(document.querySelector("main"));
+
+        rectMode(CENTER);
+        strokeJoin(ROUND);
+
+        initializeGame(); // Call the new init function
+      }
+
+      // --- NEW INITIALIZATION FUNCTION ---
+      function initializeGame() {
+        // Initialize Player 1
+        player1 = {
+          x: width * 0.25,
+          y: height / 2,
+          size: PLAYER_1_SIZE,
+          speed: PLAYER_1_SPEED,
+          angle: 0,
+          color: color(0, 150, 255), // Blue
+        };
+
+        // Initialize Player 2
+        player2 = {
+          x: width * 0.75,
+          y: height / 2,
+          size: PLAYER_2_SIZE,
+          speed: PLAYER_2_SPEED,
+          color: color(255, 100, 0), // Orange
+          dirX: -1,
+          dirY: 0,
+          isMoving: false, // For tracking input
+        };
+
+        // Reset all game state variables
+        bullet = null;
+        particles = [];
+        gameEnding = false;
+        gameOver = false;
+        gameEndTime = 0;
+        winner = null;
+        isLeapReady = true;
+        lastLeapTime = 0;
+        isLeaping = false;
+        isCharging = false;
+        chargeLevel = 0;
+
+        gameStartTime = millis(); // Start the game timer
+        loop(); // Ensure the draw loop is running
+      }
+      // --- END NEW FUNCTION ---
+
+      // --- p5.js draw() function ---
+      function draw() {
+        background(0); // Black background
+
+        if (gameOver) {
+          // Final state: Only show "GAME OVER"
+          displayGameOver(winner);
+        } else if (gameEnding) {
+          // Middle state: Hit occurred. Draw explosion, P1, and UI.
+          // Player 2 and bullet are not drawn.
+          updateParticles();
+
+          drawPlayer1();
+          drawParticles();
+          drawUI();
+
+          // Check if the delay is over
+          if (millis() - gameEndTime > GAME_END_DELAY) {
+            gameOver = true; // Trigger the final state
+            gameEnding = false;
+          }
+        } else {
+          // Normal game state: Game is running
+          handleInput();
+          updateGame();
+          drawGame(); // Draws all active game elements
+          checkCollisions();
+        }
+      }
+
+      // --- Game Logic Functions ---
+
+      function handleInput() {
+        // Player 2 movement intention
+        let dx = 0;
+        let dy = 0;
+        if (keyIsDown(65)) dx = -1; // A
+        if (keyIsDown(68)) dx = 1; // D
+        if (keyIsDown(87)) dy = -1; // W
+        if (keyIsDown(83)) dy = 1; // S
+
+        if (dx !== 0 || dy !== 0) {
+          player2.dirX = dx;
+          player2.dirY = dy;
+          player2.isMoving = true;
+        } else {
+          player2.isMoving = false;
+        }
+      }
+
+      function updateGame() {
+        // --- Player 1 Movement ---
+        if (keyIsDown(LEFT_ARROW)) player1.x -= player1.speed;
+        if (keyIsDown(RIGHT_ARROW)) player1.x += player1.speed;
+        if (keyIsDown(UP_ARROW)) player1.y -= player1.speed;
+        if (keyIsDown(DOWN_ARROW)) player1.y += player1.speed;
+
+        // Constrain player 1
+        let p1Radius = player1.size / 2;
+        player1.x = constrain(player1.x, p1Radius, width - p1Radius);
+        player1.y = constrain(player1.y, p1Radius, height - p1Radius);
+
+        // --- Player 2 Movement ---
+        if (isLeaping) {
+          // Check if leap duration is over
+          if (millis() - leapStartTime > LEAP_DURATION) {
+            isLeaping = false;
+            player2.speed = PLAYER_2_SPEED; // Restore normal speed
+          } else {
+            // Still leaping: move based on stored leap direction and high speed
+            player2.x += leapDirX * player2.speed;
+            player2.y += leapDirY * player2.speed;
+          }
+        } else if (player2.isMoving) {
+          // Not leaping, but input keys are pressed
+          // Normalize the direction vector for consistent speed
+          let mag = sqrt(player2.dirX * player2.dirX + player2.dirY * player2.dirY);
+          let moveX = 0;
+          let moveY = 0;
+          if (mag > 0) {
+            moveX = (player2.dirX / mag) * player2.speed;
+            moveY = (player2.dirY / mag) * player2.speed;
+          }
+          player2.x += moveX;
+          player2.y += moveY;
+        }
+        // If !isLeaping and !player2.isMoving, player 2 doesn't move.
+
+        // Constrain player 2
+        let p2Radius = player2.size / 2;
+        player2.x = constrain(player2.x, p2Radius, width - p2Radius);
+        player2.y = constrain(player2.y, p2Radius, height - p2Radius);
+
+        // Update Player 1's angle
+        player1.angle = atan2(mouseY - player1.y, mouseX - player1.x);
+
+        // Update Charge Level
+        if (isCharging) {
+          let chargeDuration = millis() - chargeStartTime;
+          chargeLevel = min(chargeDuration / CHARGE_TIME, 1.0); // Clamp 0.0 to 1.0
+        }
+
+        // Update bullet
+        if (bullet) {
+          bullet.x += bullet.vx;
+          bullet.y += bullet.vy;
+          if (
+            bullet.x < 0 ||
+            bullet.x > width ||
+            bullet.y < 0 ||
+            bullet.y > height
+          ) {
+            createExplosion(bullet.x, bullet.y, false); // Pass false (not a player hit)
+            bullet = null; // Destroy the bullet
+          }
+        }
+
+        // Update particles
+        updateParticles();
+
+        // Check Leap Cooldown
+        if (!isLeapReady) {
+          if (millis() - lastLeapTime >= LEAP_COOLDOWN) {
+            isLeapReady = true;
+          }
+        }
+
+        // Check for game timer
+        let elapsedTime = millis() - gameStartTime;
+        if (elapsedTime >= GAME_DURATION && !gameEnding) {
+          // Time's up! Player 2 wins.
+          winner = 'player2';
+          gameEnding = true;
+          gameEndTime = millis();
+          bullet = null; // Clear bullet just in case
+        }
+      }
+
+      function updateParticles() {
+        for (let i = particles.length - 1; i >= 0; i--) {
+          let p = particles[i];
+          p.x += p.vx;
+          p.y += p.vy;
+          p.vx *= 0.98;
+          p.vy *= 0.98;
+          p.life -= 1;
+          p.alpha -= 4;
+          if (p.life <= 0 || p.alpha <= 0) {
+            particles.splice(i, 1);
+          }
+        }
+      }
+
+      // --- Drawing Functions ---
+
+      function drawGame() {
+        // This function draws all elements during normal gameplay
+        drawPlayer1();
+        drawPlayer2();
+        drawBullet();
+        drawParticles();
+        drawUI();
+      }
+
+      function drawPlayer1() {
+        stroke(255);
+        strokeWeight(2);
+        push();
+        translate(player1.x, player1.y);
+        rotate(player1.angle);
+
+        // Calculate color based on charge level
+        let targetColor = color(255, 255, 255); // White
+        let currentColor = lerpColor(player1.color, targetColor, chargeLevel);
+        fill(currentColor);
+
+        triangle(
+          player1.size / 2,
+          0,
+          -player1.size / 2,
+          -player1.size / 2,
+          -player1.size / 2,
+          player1.size / 2
+        );
+        pop();
+      }
+
+      function drawPlayer2() {
+        stroke(255);
+        strokeWeight(2);
+        fill(player2.color);
+        square(player2.x, player2.y, player2.size, 5); // Corner roundness
+      }
+
+      function drawBullet() {
+        if (bullet) {
+          stroke(255);
+          strokeWeight(2);
+          fill(150);
+          circle(bullet.x, bullet.y, BULLET_SIZE);
+        }
+      }
+
+      function drawParticles() {
+        noStroke();
+        for (let p of particles) {
+          fill(p.r, p.g, p.b, p.alpha);
+          circle(p.x, p.y, p.size);
+        }
+      }
+
+      function drawUI() {
+        push();
+        textSize(20);
+        noStroke();
+        let yPos = height - 20;
+
+        // Draw Timer (Top-Center)
+        textAlign(CENTER, TOP);
+        textSize(32);
+        fill(255); // White
+
+        let elapsedTime = millis() - gameStartTime;
+        let remainingTime = GAME_DURATION - elapsedTime;
+        remainingTime = max(0, remainingTime); // Don't let it go below 0
+
+        let totalSeconds = floor(remainingTime / 1000);
+        let minutes = floor(totalSeconds / 60);
+        let seconds = totalSeconds % 60;
+
+        // Pad seconds with a leading zero if needed
+        let secondsString = seconds < 10 ? "0" + seconds : seconds;
+        text(`${minutes}:${secondsString}`, width / 2, 20);
+
+        // Reset text size for other UI elements
+        textSize(20);
+
+        // Leap Status (Bottom-Right)
+        textAlign(RIGHT, BOTTOM);
+        let xPosRight = width - 20;
+        if (isLeapReady) {
+          fill(0, 255, 0); // Green
+          text("Leap Ready", xPosRight, yPos);
+        } else {
+          fill(255, 0, 0); // Red
+          let timePassed = millis() - lastLeapTime;
+          let timeRemaining = (LEAP_COOLDOWN - timePassed) / 1000;
+          text(`Leap Cooldown: ${timeRemaining.toFixed(1)}`, xPosRight, yPos);
+        }
+
+        pop();
+      }
+
+      function checkCollisions() {
+        if (bullet) {
+          let halfSize = player2.size / 2;
+          if (
+            bullet.x > player2.x - halfSize &&
+            bullet.x < player2.x + halfSize &&
+            bullet.y > player2.y - halfSize &&
+            bullet.y < player2.y + halfSize
+          ) {
+            createExplosion(bullet.x, bullet.y, true); // Pass true (player was hit)
+            bullet = null; // Destroy bullet
+            // Don't destroy player2 object, just stop drawing it
+
+            winner = 'player1'; // Player 1 wins
+            gameEnding = true; // Start the end-game sequence
+            gameEndTime = millis(); // Log the time of the hit
+          }
+        }
+      }
+
+      function createExplosion(x, y, isPlayerHit) {
+        // --- PLAY EXPLOSION SOUND ---
+        if (isPlayerHit) {
+          playPlayerExplosionSound(); // New sound for player
+        } else {
+          playBulletExplosionSound(); // Old sound for bullet-off-screen
+        }
+
+        const particleCount = 20;
+        for (let i = 0; i < particleCount; i++) {
+          let p = {
+            x: x,
+            y: y,
+            vx: random(-4, 4),
+            vy: random(-4, 4),
+            size: random(3, 7),
+            r: 255,
+            g: random(100, 200),
+            b: 0,
+            alpha: 255,
+            life: random(30, 60),
+          };
+          particles.push(p);
+        }
+      }
+
+      function displayGameOver(winner) {
+        // This is the final screen. background(0) is already called.
+        noStroke();
+        textAlign(CENTER, CENTER);
+        textSize(64);
+
+        if (winner === 'player1') {
+          fill(0, 150, 255); // Blue
+          text("TRIANGLE WINS!", width / 2, height / 2);
+        } else if (winner === 'player2') {
+          fill(255, 100, 0); // Orange
+          text("SQUARE WINS!", width / 2, height / 2);
+        } else {
+          fill(255, 0, 0); // Red
+          text("GAME OVER", width / 2, height / 2); // Failsafe
+  }
+
+  // --- DRAW RESTART BUTTON ---
+  let btnX = width / 2;
+  let btnY = height / 2 + 100;
+  let btnW = 200;
+  let btnH = 50;
+
+  fill(200); // Button color
+  noStroke();
+  rect(btnX, btnY, btnW, btnH, 10); // Rounded rect
+
+  fill(0); // Black text
+  textSize(24);
+  textAlign(CENTER, CENTER);
+  text("Restart", btnX, btnY);
+  // --- END DRAW RESTART BUTTON ---
+
+  noLoop(); // Stop the draw loop completely
+}
+
+// --- p5.js Event Functions ---
+
+function mousePressed() {
+  // p5.js sound context needs to be started by a user gesture
+  // FIXED: Replaced undefined userStartAudio() with the correct p5.js function
+  if (getAudioContext().state !== 'running') {
+    getAudioContext().resume();
+  }
+
+  // --- RESTART LOGIC ---
+  if (gameOver) {
+    let btnX = width / 2;
+    let btnY = height / 2 + 100;
+    let btnW = 200;
+    let btnH = 50;
+    // Check if the click is on the "Restart" button
+    if (
+      mouseX > btnX - btnW / 2 &&
+      mouseX < btnX + btnW / 2 &&
+      mouseY > btnY - btnH / 2 &&
+      mouseY < btnY + btnH / 2
+    ) {
+      initializeGame(); // Call the new reset function
+    }
+    return; // Stop further execution if game is over
+  }
+  // --- END RESTART LOGIC ---
+
+  // Can only start charging if game is not ending/over, no bullet exists
+  if (!gameEnding && !gameOver && bullet === null && mouseButton === LEFT) {
+          isCharging = true;
+          chargeStartTime = millis();
+          chargeLevel = 0;
+        }
+      }
+
+      function mouseReleased() {
+        if (isCharging) {
+          isCharging = false;
+          // Check again, just in case game ended while charging
+          if (!gameEnding && !gameOver && bullet === null) {
+            let isCharged = chargeLevel >= 1.0; // Check if fully charged
+            shootBullet(isCharged);
+          }
+          // Reset charge level after firing or if release fails
+          chargeLevel = 0;
+        }
+      }
+
+      function shootBullet(isCharged) {
+        // Use double speed if charged, otherwise normal speed
+        let currentSpeed = isCharged ? BULLET_SPEED * 2 : BULLET_SPEED;
+
+        let vx = cos(player1.angle) * currentSpeed;
+        let vy = sin(player1.angle) * currentSpeed;
+        bullet = {
+          x: player1.x + vx,
+          y: player1.y + vy,
+          vx: vx,
+          vy: vy,
+        };
+
+        // --- PLAY THE SOUND ---
+        // This function now handles both normal and charged shots
+        playShootSound(isCharged);
+      }
+
+      // --- NEW SOUND FUNCTIONS ---
+
+      /**
+       * Plays a sound for shooting the bullet.
+       * Plays a different, "bigger" sound if the shot is charged.
+       * @param {boolean} isCharged - True if the shot was fully charged.
+       */
+      function playShootSound(isCharged) {
+        if (isCharged) {
+          // --- CHARGED SHOT SOUND ---
+          let env = new p5.Envelope();
+          env.setADSR(0.01, 0.2, 0.1, 0.2); // Slower attack/decay for "bigger" sound
+          env.setRange(1.0, 0); // Max volume
+
+          let osc = new p5.Oscillator();
+          osc.setType('sawtooth'); // More "aggressive" waveform
+          osc.freq(800); // Start a bit lower
+          osc.amp(env);
+          osc.start();
+
+          osc.freq(400, 0.1); // Drop pitch
+          osc.freq(0, 0.2, 0.2); // Fade to 0
+          env.play();
+        } else {
+          // --- NORMAL SHOT SOUND ---
+          let env = new p5.Envelope();
+          env.setADSR(0.001, 0.1, 0.2, 0.1); // Quick "pew"
+          env.setRange(0.8, 0);
+
+          let osc = new p5.Oscillator();
+          osc.setType('triangle'); // Softer waveform
+          osc.freq(1200); // Start at a high pitch
+          osc.amp(env);
+          osc.start();
+
+          osc.freq(600, 0.05); // Drop pitch quickly
+          osc.freq(0, 0.1, 0.1); // Fade to 0
+          env.play();
+        }
+      }
+
+      /**
+       * Plays a short "pop" sound for bullet destruction.
+       */
+      function playBulletExplosionSound() {
+        // Renamed from playExplosionSound
+        let noise = new p5.Noise('white'); // Use white noise for a "pop"
+        noise.start();
+
+        let env = new p5.Envelope();
+        env.setADSR(0.001, 0.1, 0, 0.1); // Very short attack, quick decay
+        env.setRange(0.5, 0); // Half volume
+
+        noise.amp(env); // Let the envelope control the noise volume
+        env.play();
+
+        // The sound will stop when the envelope finishes
+        // and p5.js will garbage collect the noise object.
+      }
+
+      /**
+       * Plays a "bigger" explosion sound for player destruction.
+       */
+      function playPlayerExplosionSound() {
+        // Low rumble
+        let noise = new p5.Noise('brown'); // Brown noise is deeper
+        noise.start();
+
+        let noiseEnv = new p5.Envelope();
+        noiseEnv.setADSR(0.01, 0.3, 0.1, 0.3); // Longer sound
+        noiseEnv.setRange(0.8, 0);
+        noise.amp(noiseEnv);
+        noiseEnv.play();
+
+        // High-frequency "crack"
+        let osc = new p5.Oscillator();
+        osc.setType('sawtooth');
+        osc.freq(1600);
+        osc.start();
+
+        let oscEnv = new p5.Envelope();
+        oscEnv.setADSR(0.005, 0.1, 0, 0.1); // Quick crackle
+        oscEnv.setRange(0.5, 0);
+        osc.amp(oscEnv);
+        oscEnv.play();
+
+        // Pitch drop
+        osc.freq(400, 0.1);
+        osc.freq(0, 0.1, 0.1);
+      }
+
+      // --- END NEW SOUND FUNCTIONS ---
+
+      function keyPressed() {
+        // Leap only works if game is not ending or over
+        if (keyCode === 32 && isLeapReady && !gameEnding && !gameOver) {
+          // 32 is Spacebar
+          performLeap();
+        }
+      }
+
+      function performLeap() {
+        isLeapReady = false;
+        lastLeapTime = millis();
+
+        isLeaping = true; // START the leap
+        leapStartTime = millis();
+
+        // Set high speed
+        player2.speed = PLAYER_2_SPEED * LEAP_SPEED_MULTIPLIER;
+
+        // Store the normalized direction for the leap
+        // Uses the last direction player2 was moving
+        let mag = sqrt(player2.dirX * player2.dirX + player2.dirY * player2.dirY);
+        if (mag === 0) {
+          // Failsafe if mag is 0 (e.g., at start)
+          leapDirX = -1; // Default leap left
+          leapDirY = 0;
+        } else {
+          leapDirX = player2.dirX / mag;
+          leapDirY = player2.dirY / mag;
+        }
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Neon Possession Battle</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: black;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      margin: auto;
+    }
+  </style>
+  <!-- p5.js library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+</head>
+<body>
+<script>
+// === Neon Possession Battle ===
+// Triangle (Player 1) vs Square (Player 2)
+// Proper possession + powerful launch + cooldown + restart
+
+let tri, sq, circ;
+let gameState = "aim"; // "aim", "possession", "cooldown", "end"
+let timer = 0;
+let cooldownTimer = 0;
+let hitMessage = false;
+let glowGrid = [];
+let restartButton;
+
+function setup() {
+  createCanvas(800, 600);
+  angleMode(DEGREES);
+  tri = new TriangleShooter(width / 4, height / 2);
+  sq = new PlayerSquare(width * 0.75, height / 2);
+  circ = new CircleProjectile();
+  generateGrid();
+
+  restartButton = createButton("RESTART");
+  styleRestartButton();
+  restartButton.mousePressed(restartGame);
+  restartButton.hide();
+}
+
+function draw() {
+  background(0);
+  drawGrid();
+  drawHUD();
+
+  sq.update();
+  sq.display();
+
+  if (gameState === "aim" || gameState === "cooldown") tri.update();
+  tri.display();
+  circ.update();
+  circ.display();
+
+  // Timers
+  if (gameState === "possession") {
+    timer++;
+    if (timer > 240) startCooldown(); // 4s possession
+  }
+
+  if (gameState === "cooldown") {
+    cooldownTimer++;
+    if (cooldownTimer > 240) {
+      gameState = "aim";
+      cooldownTimer = 0;
+    }
+  }
+
+  // Collision check
+  if (circ.active && dist(circ.x, circ.y, sq.x, sq.y) < 25) {
+    hitMessage = true;
+    flashScreen();
+    showWinMessage();
+    gameState = "end";
+    circ.reset();
+    restartButton.show();
+  }
+}
+
+// === Triangle Shooter ===
+class TriangleShooter {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.angle = 0;
+    this.speed = 3;
+  }
+
+  update() {
+    if (keyIsDown(65)) this.angle -= 4; // A
+    if (keyIsDown(68)) this.angle += 4; // D
+    if (keyIsDown(87)) { // W
+      this.x += cos(this.angle) * this.speed;
+      this.y += sin(this.angle) * this.speed;
+    }
+    if (keyIsDown(83)) { // S
+      this.x -= cos(this.angle) * this.speed;
+      this.y -= sin(this.angle) * this.speed;
+    }
+    this.x = constrain(this.x, 0, width);
+    this.y = constrain(this.y, 0, height);
+  }
+
+  display() {
+    push();
+    translate(this.x, this.y);
+    rotate(this.angle);
+    noStroke();
+    fill(0, 255, 255, 180);
+    drawingContext.shadowBlur = 25;
+    drawingContext.shadowColor = color(0, 255, 255);
+    triangle(-15, -10, -15, 10, 15, 0);
+    pop();
+  }
+
+  shoot() {
+    if (!circ.active && gameState === "aim") {
+      circ.fire(this.x, this.y, this.angle);
+      gameState = "possession";
+      timer = 0;
+    }
+  }
+}
+
+// === Circle Projectile ===
+class CircleProjectile {
+  constructor() {
+    this.x = 0;
+    this.y = 0;
+    this.angle = 0;
+    this.speed = 4;
+    this.active = false;
+    this.trail = [];
+  }
+
+  fire(x, y, angle) {
+    this.x = x + cos(angle) * 25;
+    this.y = y + sin(angle) * 25;
+    this.angle = angle;
+    this.active = true;
+    this.trail = [];
+
+    // Stronger launch
+    this.vx = cos(angle) * 10;
+    this.vy = sin(angle) * 10;
+  }
+
+  update() {
+    if (!this.active) return;
+
+    // Launch motion
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // Gradual friction
+    this.vx *= 0.92;
+    this.vy *= 0.92;
+
+    // After launch slows, allow control
+    if (abs(this.vx) < 0.5 && abs(this.vy) < 0.5) {
+      if (keyIsDown(65)) this.x -= this.speed; // A
+      if (keyIsDown(68)) this.x += this.speed; // D
+      if (keyIsDown(87)) this.y -= this.speed; // W
+      if (keyIsDown(83)) this.y += this.speed; // S
+    }
+
+    // Trail
+    this.trail.push({ x: this.x, y: this.y });
+    if (this.trail.length > 25) this.trail.shift();
+
+    // Boundary check
+    if (this.x < 0 || this.x > width || this.y < 0 || this.y > height) {
+      startCooldown();
+    }
+  }
+
+  display() {
+    if (!this.active) return;
+
+    // Trail glow
+    noFill();
+    for (let i = 0; i < this.trail.length; i++) {
+      let p = this.trail[i];
+      let alpha = map(i, 0, this.trail.length, 0, 150);
+      stroke(255, 255, 100, alpha);
+      strokeWeight(2);
+      point(p.x, p.y);
+    }
+
+    // Main circle glow
+    noStroke();
+    fill(255, 255, 100, 220);
+    drawingContext.shadowBlur = 25;
+    drawingContext.shadowColor = color(255, 255, 100);
+    ellipse(this.x, this.y, 15);
+  }
+
+  reset() {
+    this.active = false;
+    this.trail = [];
+  }
+}
+
+// === Square (Player 2) ===
+class PlayerSquare {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.size = 30;
+    this.speed = 3;
+  }
+
+  update() {
+    if (keyIsDown(LEFT_ARROW)) this.x -= this.speed;
+    if (keyIsDown(RIGHT_ARROW)) this.x += this.speed;
+    if (keyIsDown(UP_ARROW)) this.y -= this.speed;
+    if (keyIsDown(DOWN_ARROW)) this.y += this.speed;
+    this.x = constrain(this.x, 0, width);
+    this.y = constrain(this.y, 0, height);
+  }
+
+  display() {
+    push();
+    rectMode(CENTER);
+    fill(255, 0, 200, 180);
+    drawingContext.shadowBlur = 25;
+    drawingContext.shadowColor = color(255, 0, 200);
+    noStroke();
+    rect(this.x, this.y, this.size, this.size, 5);
+    pop();
+  }
+}
+
+// === Game Functions ===
+function startCooldown() {
+  circ.reset();
+  gameState = "cooldown";
+  timer = 0;
+  cooldownTimer = 0;
+}
+
+function restartGame() {
+  restartButton.hide();
+  gameState = "aim";
+  circ.reset();
+  tri.x = width / 4;
+  tri.y = height / 2;
+  sq.x = width * 0.75;
+  sq.y = height / 2;
+  hitMessage = false;
+}
+
+function keyPressed() {
+  if (key === ' ') tri.shoot();
+}
+
+// === Visuals ===
+function flashScreen() {
+  push();
+  fill(255, 255, 255, 120);
+  rect(0, 0, width, height);
+  pop();
+}
+
+function showWinMessage() {
+  textAlign(CENTER, CENTER);
+  textSize(60);
+  fill(0, 255, 180);
+  drawingContext.shadowBlur = 40;
+  drawingContext.shadowColor = color(0, 255, 180);
+  text("YOU WON!", width / 2, height / 2);
+}
+
+// === HUD ===
+function drawHUD() {
+  noStroke();
+  textFont("monospace");
+  textAlign(LEFT);
+  fill(0, 255, 255, 180);
+  textSize(16);
+  text(`MODE: ${gameState.toUpperCase()}`, 20, 30);
+
+  fill(255, 0, 200, 180);
+  textAlign(RIGHT);
+  text(`P1: WASD + SPACE  |  P2: ARROWS`, width - 20, 30);
+}
+
+// === Neon Grid ===
+function generateGrid() {
+  for (let x = 0; x < width; x += 40) {
+    for (let y = 0; y < height; y += 40) {
+      glowGrid.push({ x, y });
+    }
+  }
+}
+
+function drawGrid() {
+  stroke(0, 80, 120, 40);
+  strokeWeight(1);
+  for (let g of glowGrid) {
+    point(g.x, g.y);
+  }
+}
+
+// === Restart Button Style ===
+function styleRestartButton() {
+  restartButton.position(width / 2 - 60, height / 2 + 60);
+  restartButton.size(120, 40);
+  restartButton.style("background", "linear-gradient(90deg, #00ffff, #ff00ff)");
+  restartButton.style("border", "none");
+  restartButton.style("border-radius", "8px");
+  restartButton.style("color", "white");
+  restartButton.style("font-size", "16px");
+  restartButton.style("font-family", "monospace");
+  restartButton.style("font-weight", "bold");
+  restartButton.style("cursor", "pointer");
+  restartButton.style("box-shadow", "0 0 15px #00ffff");
+}
+</script>
+</body>
+</html>
